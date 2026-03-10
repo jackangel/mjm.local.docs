@@ -76,6 +76,11 @@ public sealed class EmbeddingsOptions
     /// Ollama-specific configuration.
     /// </summary>
     public OllamaEmbeddingsOptions Ollama { get; init; } = new();
+
+    /// <summary>
+    /// LlamaCpp-specific configuration.
+    /// </summary>
+    public LlamaCppEmbeddingsOptions LlamaCpp { get; init; } = new();
 }
 
 /// <summary>
@@ -101,7 +106,12 @@ public enum EmbeddingProvider
     /// <summary>
     /// Ollama local embeddings (e.g., nomic-embed-text, mxbai-embed-large).
     /// </summary>
-    Ollama
+    Ollama,
+
+    /// <summary>
+    /// LlamaCpp local embeddings with llama-server.
+    /// </summary>
+    LlamaCpp
 }
 
 /// <summary>
@@ -157,6 +167,55 @@ public sealed class OllamaEmbeddingsOptions
     /// The embedding model to use (e.g., nomic-embed-text, mxbai-embed-large, all-minilm).
     /// </summary>
     public string Model { get; init; } = "nomic-embed-text";
+}
+
+/// <summary>
+/// LlamaCpp local embedding configuration.
+/// </summary>
+public sealed class LlamaCppEmbeddingsOptions
+{
+    /// <summary>
+    /// Path to llama-server.exe.
+    /// </summary>
+    public string ExecutablePath { get; init; } = "src/llamacpp/llama-server.exe";
+
+    /// <summary>
+    /// Path to the GGUF model file.
+    /// </summary>
+    public string ModelPath { get; init; } = "src/llamacpp/v5-nano-retrieval-Q8_0.gguf";
+
+    /// <summary>
+    /// HTTP port for llama-server.
+    /// </summary>
+    public int Port { get; init; } = 8088;
+
+    /// <summary>
+    /// Context size parameter (-c).
+    /// </summary>
+    public int ContextSize { get; init; } = 4096;
+
+    /// <summary>
+    /// Number of threads (-t). Null = auto-detect.
+    /// </summary>
+    public int? Threads { get; init; }
+
+    /// <summary>
+    /// Number of layers to offload to GPU (-ngl). 0 = CPU only.
+    /// </summary>
+    public int GpuLayers { get; init; } = 0;
+
+    /// <summary>
+    /// Logical batch size (-b). Must be >= max tokens in a single embedding request.
+    /// Increase if you see "input is too large to process" errors.
+    /// </summary>
+    public int BatchSize { get; init; } = 4096;
+
+    /// <summary>
+    /// Physical/micro-batch size (--ubatch-size). Controls max tokens per forward pass.
+    /// Must be >= BatchSize for embedding generation. Defaults to 4096.
+    /// Increase if you see "physical batch size" errors.
+    /// </summary>
+    public int UBatchSize { get; init; } = 4096;
 }
 
 /// <summary>

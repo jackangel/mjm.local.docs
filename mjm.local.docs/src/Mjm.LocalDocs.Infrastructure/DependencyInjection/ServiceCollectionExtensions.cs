@@ -223,6 +223,10 @@ public static class ServiceCollectionExtensions
                 ConfigureOllamaEmbeddings(services, embeddingsOptions);
                 break;
 
+            case EmbeddingProvider.LlamaCpp:
+                ConfigureLlamaCppEmbeddings(services, embeddingsOptions);
+                break;
+
             case EmbeddingProvider.Fake:
             default:
                 services.AddSingleton<IEmbeddingService>(
@@ -303,6 +307,14 @@ public static class ServiceCollectionExtensions
 
         services.AddSingleton<IEmbeddingService>(
             new SemanticKernelEmbeddingService(embeddingGenerator, embeddingsOptions.Dimension));
+    }
+
+    private static void ConfigureLlamaCppEmbeddings(
+        IServiceCollection services,
+        EmbeddingsOptions embeddingsOptions)
+    {
+        services.AddSingleton<IEmbeddingService>(sp =>
+            new LlamaCppEmbeddingService(embeddingsOptions.LlamaCpp, embeddingsOptions.Dimension));
     }
 
     /// <summary>

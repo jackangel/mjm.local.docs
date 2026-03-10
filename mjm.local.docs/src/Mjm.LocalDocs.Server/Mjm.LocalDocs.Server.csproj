@@ -24,4 +24,13 @@
     <UserSecretsId>8ef649af-010c-4434-8adc-98da93e2e355</UserSecretsId>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- Include llamacpp folder in publish output -->
+    <Content Include="..\llamacpp\**\*.*">
+      <Link>llamacpp\%(RecursiveDir)%(FileName)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+
 </Project>

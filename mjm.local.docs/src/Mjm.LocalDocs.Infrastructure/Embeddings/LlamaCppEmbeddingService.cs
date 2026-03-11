@@ -42,6 +42,23 @@ public sealed class LlamaCppEmbeddingService : IEmbeddingService, IDisposable
         if (options.ContextSize <= 0)
             throw new ArgumentException("ContextSize must be positive.", nameof(options));
 
+        // Resolve relative paths using application base directory
+        var resolvedExecutablePath = ResolvePath(options.ExecutablePath);
+        var resolvedModelPath = ResolvePath(options.ModelPath);
+
+        // Create a new options instance with resolved paths
+        var resolvedOptions = new LlamaCppEmbeddingsOptions
+        {
+            ExecutablePath = resolvedExecutablePath,
+            ModelPath = resolvedModelPath,
+            Port = options.Port,
+            ContextSize = options.ContextSize,
+            BatchSize = options.BatchSize,
+            UBatchSize = options.UBatchSize,
+            Threads = options.Threads,
+            GpuLayers = options.GpuLayers
+        };
+
         EmbeddingDimension = embeddingDimension;
         _port = options.Port;
 
@@ -53,7 +70,7 @@ public sealed class LlamaCppEmbeddingService : IEmbeddingService, IDisposable
         };
 
         // Launch llama-server process
-        _process = LaunchLlamaServer(options);
+        _process = LaunchLlamaServer(resolvedOptions);
 
         // Wait for server to become ready
         WaitForServerReady();
@@ -108,6 +125,26 @@ public sealed class LlamaCppEmbeddingService : IEmbeddingService, IDisposable
         {
             throw new InvalidOperationException($"Failed to generate embeddings: {ex.Message}", ex);
         }
+    }
+
+    /// <summary>
+    /// Resolves a path to an absolute path. Relative paths are resolved using the application base directory.
+    /// </summary>
+    /// <param name="path">The path to resolve (can be absolute or relative).</param>
+    /// <returns>The absolute path.</returns>
+    private static string ResolvePath(string path)
+    {
+        // If already absolute, return as-is
+        if (Path.IsPathRooted(path))
+            return path;
+
+        // Resolve relative to application base directory
+        var basePath = AppContext.BaseDirectory;
+        var resolvedPath = Path.GetFullPath(Path.Combine(basePath, path));
+        
+        Console.WriteLine($"[LlamaCpp] Path resolution: '{path}' -> '{resolvedPath}'");
+        
+        return resolvedPath;
     }
 
     /// <summary>

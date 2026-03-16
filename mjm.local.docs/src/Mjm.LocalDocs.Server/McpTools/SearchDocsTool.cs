@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using ModelContextProtocol.Server;
+using Mjm.LocalDocs.Core.Models;
 using Mjm.LocalDocs.Core.Services;
 
 namespace Mjm.LocalDocs.Server.McpTools;
@@ -18,17 +19,50 @@ public sealed class SearchDocsTool
     }
 
     [McpServerTool(Name = "search_docs")]
-    [Description("Search for documents using semantic search. Returns relevant document chunks based on the query.")]
+    [Description("Search for documents using semantic search across all projects. Returns relevant document chunks based on the query.")]
     public async Task<string> SearchDocsAsync(
         [Description("The search query in natural language")] string query,
-        [Description("Optional project ID to search in. Leave empty to search all projects.")] string? projectId = null,
         [Description("Maximum number of results to return (default: 5, max: 20)")] int limit = 5,
         CancellationToken cancellationToken = default)
     {
-        limit = Math.Clamp(limit, 1, 20);
+        try
+        {
+            limit = Math.Clamp(limit, 1, 20);
 
-        var results = await _documentService.SearchAsync(query, projectId, limit, cancellationToken);
+            var results = await _documentService.SearchAsync(query, null, limit, cancellationToken);
 
+            return FormatSearchResults(results);
+        }
+        catch (Exception ex)
+        {
+            return $"Error searching documents: {ex.Message}";
+        }
+    }
+
+    [McpServerTool(Name = "search_project_docs")]
+    [Description("Search for documents using semantic search within a specific project. Returns relevant document chunks based on the query.")]
+    public async Task<string> SearchProjectDocsAsync(
+        [Description("The project ID to search within")] string projectId,
+        [Description("The search query in natural language")] string query,
+        [Description("Maximum number of results to return (default: 5, max: 20)")] int limit = 5,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            limit = Math.Clamp(limit, 1, 20);
+
+            var results = await _documentService.SearchAsync(query, projectId, limit, cancellationToken);
+
+            return FormatSearchResults(results);
+        }
+        catch (Exception ex)
+        {
+            return $"Error searching documents in project '{projectId}': {ex.Message}";
+        }
+    }
+
+    private static string FormatSearchResults(IReadOnlyList<SearchResult> results)
+    {
         if (results.Count == 0)
         {
             return "No documents found matching your query.";

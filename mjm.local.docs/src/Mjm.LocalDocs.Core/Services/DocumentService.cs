@@ -138,6 +138,49 @@ public sealed class DocumentService
     }
 
     /// <summary>
+    /// Adds multiple documents to the store in a batch, processing each sequentially.
+    /// Individual document failures do not stop the batch; all results are returned.
+    /// </summary>
+    /// <param name="documents">The documents to add. Each must have FileContent set.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Batch result containing successful and failed documents.</returns>
+    public async Task<BatchUploadResult> AddDocumentBatchAsync(
+        IEnumerable<Document> documents,
+        CancellationToken cancellationToken = default)
+    {
+        var documentList = documents.ToList();
+        var successfulDocuments = new List<Document>();
+        var failedDocuments = new List<BatchUploadResult.FailedDocument>();
+
+        foreach (var document in documentList)
+        {
+            try
+            {
+                var addedDocument = await AddDocumentAsync(document, cancellationToken);
+                successfulDocuments.Add(addedDocument);
+            }
+            catch (Exception ex)
+            {
+                failedDocuments.Add(new BatchUploadResult.FailedDocument
+                {
+                    FileName = document.FileName,
+                    ErrorMessage = ex.Message,
+                    Exception = ex
+                });
+            }
+        }
+
+        return new BatchUploadResult
+        {
+            SuccessfulDocuments = successfulDocuments,
+            FailedDocuments = failedDocuments,
+            TotalCount = documentList.Count,
+            SuccessCount = successfulDocuments.Count,
+            FailureCount = failedDocuments.Count
+        };
+    }
+
+    /// <summary>
     /// Updates a document by creating a new version. The previous version is preserved
     /// as history but its chunks and embeddings are removed from search.
     /// </summary>

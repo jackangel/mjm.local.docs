@@ -2,9 +2,15 @@
 @attribute [Authorize]
 @rendermode InteractiveServer
 @using System.ComponentModel.DataAnnotations
+@using System.Security.Cryptography
+@using Microsoft.AspNetCore.Components.Forms
 @using Mjm.LocalDocs.Core.Abstractions
 @using Mjm.LocalDocs.Core.Models
+@using Mjm.LocalDocs.Core.Services
+@using Mjm.LocalDocs.Infrastructure.Documents
 @inject IProjectRepository ProjectRepository
+@inject DocumentService DocumentService
+@inject CompositeDocumentReader DocumentReader
 @inject NavigationManager Navigation
 @inject ISnackbar Snackbar
 
@@ -64,10 +70,109 @@
     </EditForm>
 </MudPaper>
 
+<MudPaper Class="pa-6 mt-6" Elevation="2">
+    <MudText Typo="Typo.h5" Class="mb-4">Upload Documents</MudText>
+    
+    <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-3">
+        Upload documents to be indexed for this project after creation.
+    </MudText>
+    
+    <MudFileUpload T="IBrowserFile" Accept=".txt,.md,.pdf,.docx" MaximumFileCount="100" OnFilesChanged="@OnFilesSelectedAsync">
+        <ActivatorContent>
+            <MudPaper Outlined="true" Class="pa-8 mb-4" Style="border-style: dashed; cursor: pointer; background-color: var(--mud-palette-background-grey); transition: all 0.3s ease;">
+                <div class="d-flex flex-column align-center justify-center" style="min-height: 150px;">
+                    <MudIcon Icon="@Icons.Material.Filled.CloudUpload" Size="Size.Large" Color="Color.Primary" Class="mb-3" />
+                    <MudText Typo="Typo.h6" Class="mb-2">Drag & drop files here</MudText>
+                    <MudText Typo="Typo.body2" Color="Color.Secondary">or click to browse</MudText>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-3">
+                        Supported formats: .txt, .md, .pdf, .docx
+                    </MudText>
+                </div>
+            </MudPaper>
+        </ActivatorContent>
+    </MudFileUpload>
+    
+    @* File List Display - Coder will add state management to populate this *@
+    <MudText Typo="Typo.subtitle2" Class="mb-2">Selected Files (@(_selectedFiles?.Count ?? 0))</MudText>
+    <MudPaper Outlined="true" Class="pa-4 mb-4" Style="min-height: 120px; max-height: 400px; overflow-y: auto;">
+        @if (_selectedFiles == null || _selectedFiles.Count == 0)
+        {
+            <MudText Typo="Typo.body2" Color="Color.Secondary" Align="Align.Center" Class="py-6">
+                <MudIcon Icon="@Icons.Material.Filled.Description" Size="Size.Large" Color="Color.Secondary" Class="mb-2" />
+                <br />
+                No files selected
+            </MudText>
+        }
+        else
+        {
+            <MudList T="string" Dense="true">
+                @foreach (var file in _selectedFiles)
+                {
+                    var status = _fileStatuses.GetValueOrDefault(file.Name, UploadStatus.Pending);
+                    <MudListItem T="string">
+                        <div class="d-flex align-center justify-space-between">
+                            <div class="d-flex align-center gap-2">
+                                <MudIcon Icon="@Icons.Material.Filled.Description" Size="Size.Small" />
+                                <div>
+                                    <MudText Typo="Typo.body2">@file.Name</MudText>
+                                    <MudText Typo="Typo.caption" Color="Color.Secondary">@FormatFileSize(file.Size)</MudText>
+                                </div>
+                            </div>
+                            <div class="d-flex align-center gap-2">
+                                <MudChip T="string" Size="Size.Small" 
+                                         Color="@(status == UploadStatus.Failed ? Color.Error : Color.Default)"
+                                         Icon="@GetFileStatusIcon(status)">
+                                    @status
+                                </MudChip>
+                                <MudIconButton Icon="@Icons.Material.Filled.Close" 
+                                               Size="Size.Small" 
+                                               Disabled="@_uploading"
+                                               OnClick="@(() => RemoveFile(file))" />
+                            </div>
+                        </div>
+                    </MudListItem>
+                }
+            </MudList>
+        }
+    </MudPaper>
+    
+    <div class="d-flex gap-3">
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   Disabled="@(_selectedFiles == null || _selectedFiles.Count == 0 || _uploading || _createdProject == null)"
+                   StartIcon="@Icons.Material.Filled.Upload"
+                   OnClick="UploadDocumentsAsync">
+            @if (_uploading)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                <span>Uploading...</span>
+            }
+            else
+            {
+                <span>Upload Documents</span>
+            }
+        </MudButton>
+        
+        <MudButton Variant="Variant.Outlined"
+                   Color="Color.Default"
+                   Disabled="@(_selectedFiles == null || _selectedFiles.Count == 0 || _uploading)"
+                   OnClick="ClearFiles"
+                   StartIcon="@Icons.Material.Filled.Clear">
+            Clear All
+        </MudButton>
+    </div>
+</MudPaper>
+
 @code {
     private readonly ProjectFormModel _model = new();
     private bool _saving;
     private string? _nameError;
+    
+    // Upload state management
+    private List<IBrowserFile>? _selectedFiles;
+    private bool _uploading;
+    private Dictionary<string, UploadStatus> _fileStatuses = new();
+    private Project? _createdProject;
     
     private readonly List<BreadcrumbItem> _breadcrumbs =
     [
@@ -75,6 +180,113 @@
         new("Projects", href: "/projects", icon: Icons.Material.Filled.Folder),
         new("New", href: null, disabled: true)
     ];
+
+    private enum UploadStatus
+    {
+        Pending,
+        Uploading,
+        Success,
+        Failed
+    }
+
+    private async Task OnFilesSelectedAsync(InputFileChangeEventArgs e)
+    {
+        var files = e.GetMultipleFiles(maximumFileCount: 100);
+        
+        if (files.Count == 0)
+        {
+            return;
+        }
+
+        _selectedFiles = new List<IBrowserFile>(files);
+        _fileStatuses.Clear();
+
+        // Check for duplicate filenames in the current batch
+        var duplicateNames = files
+            .GroupBy(f => f.Name, StringComparer.OrdinalIgnoreCase)
+            .Where(g => g.Count() > 1)
+            .Select(g => g.Key)
+            .ToList();
+
+        if (duplicateNames.Count > 0)
+        {
+            Snackbar.Add($"Duplicate filenames detected: {string.Join(", ", duplicateNames)}. Please rename files before uploading.", Severity.Warning);
+        }
+
+        // Validate each file
+        foreach (var file in _selectedFiles)
+        {
+            var (isValid, errorMessage) = await ValidateFileAsync(file);
+            
+            if (!isValid)
+            {
+                _fileStatuses[file.Name] = UploadStatus.Failed;
+                Snackbar.Add($"'{file.Name}': {errorMessage}", Severity.Error);
+            }
+            else
+            {
+                _fileStatuses[file.Name] = UploadStatus.Pending;
+            }
+        }
+
+        StateHasChanged();
+    }
+
+    private void RemoveFile(IBrowserFile file)
+    {
+        if (_selectedFiles == null || _uploading)
+        {
+            return;
+        }
+
+        _selectedFiles.Remove(file);
+        _fileStatuses.Remove(file.Name);
+
+        if (_selectedFiles.Count == 0)
+        {
+            _selectedFiles = null;
+            _fileStatuses.Clear();
+        }
+
+        StateHasChanged();
+    }
+
+    private void ClearFiles()
+    {
+        if (_uploading)
+        {
+            return;
+        }
+
+        _selectedFiles = null;
+        _fileStatuses.Clear();
+        StateHasChanged();
+    }
+
+    private string GetFileStatusIcon(UploadStatus status) => status switch
+    {
+        UploadStatus.Pending => Icons.Material.Filled.Schedule,
+        UploadStatus.Uploading => Icons.Material.Filled.CloudUpload,
+        UploadStatus.Success => Icons.Material.Filled.CheckCircle,
+        UploadStatus.Failed => Icons.Material.Filled.Error,
+        _ => Icons.Material.Filled.Help
+    };
+
+    private string FormatFileSize(long bytes)
+    {
+        if (bytes < 1024)
+        {
+            return $"{bytes} B";
+        }
+        else if (bytes < 1024 * 1024)
+        {
+            return $"{bytes / 1024.0:F1} KB";
+        }
+        else
+        {
+            return $"{bytes / (1024.0 * 1024.0):F1} MB";
+        }
+    }
 
     private async Task CreateProjectAsync()
     {
@@ -106,15 +318,278 @@
             };
 
             await ProjectRepository.CreateAsync(project);
+            _createdProject = project;
             
-            Snackbar.Add($"Project \"{project.Name}\" created successfully!", Severity.Success);
-            Navigation.NavigateTo($"/projects/{project.Id}");
+            Snackbar.Add($"Project \"{project.Name}\" created successfully! You can now upload documents.", Severity.Success);
+            
+            // Navigate to project page if no files are selected
+            if (_selectedFiles == null || _selectedFiles.Count == 0)
+            {
+                Navigation.NavigateTo($"/projects/{project.Id}");
+            }
         }
         catch (Exception ex)
         {
             Snackbar.Add($"Error creating project: {ex.Message}", Severity.Error);
-            _saving = false;
         }
+        finally
+        {
+            _saving = false;
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>
+    /// Uploads all selected documents to the created project.
+    /// </summary>
+    private async Task UploadDocumentsAsync()
+    {
+        if (_createdProject == null)
+        {
+            Snackbar.Add("Please create the project first before uploading documents.", Severity.Warning);
+            return;
+        }
+
+        if (_selectedFiles == null || _selectedFiles.Count == 0)
+        {
+            return;
+        }
+
+        _uploading = true;
+        StateHasChanged();
+
+        var documentsToUpload = new List<Document>();
+
+        try
+        {
+            // Process each file
+            foreach (var file in _selectedFiles)
+            {
+                // Skip files that failed initial validation
+                if (_fileStatuses.GetValueOrDefault(file.Name) == UploadStatus.Failed)
+                {
+                    continue;
+                }
+
+                _fileStatuses[file.Name] = UploadStatus.Uploading;
+                StateHasChanged();
+
+                try
+                {
+                    // Re-validate file before processing
+                    var (isValid, validationError) = await ValidateFileAsync(file);
+                    if (!isValid)
+                    {
+                        _fileStatuses[file.Name] = UploadStatus.Failed;
+                        Snackbar.Add($"'{file.Name}': {validationError}", Severity.Error);
+                        continue;
+                    }
+
+                    // Read file content safely
+                    var (fileContent, readError) = await ReadFileContentAsync(file);
+                    if (fileContent == null || readError != null)
+                    {
+                        _fileStatuses[file.Name] = UploadStatus.Failed;
+                        Snackbar.Add($"Error reading '{file.Name}': {readError}", Severity.Error);
+                        continue;
+                    }
+
+                    // Get file extension
+                    var fileExtension = Path.GetExtension(file.Name);
+                    if (string.IsNullOrEmpty(fileExtension))
+                    {
+                        fileExtension = ".txt";
+                    }
+
+                    // Extract text from document
+                    var extractionResult = await DocumentReader.ExtractTextAsync(fileContent, fileExtension);
+                    if (!extractionResult.Success)
+                    {
+                        _fileStatuses[file.Name] = UploadStatus.Failed;
+                        Snackbar.Add($"Failed to extract text from '{file.Name}': {extractionResult.ErrorMessage}", Severity.Error);
+                        continue;
+                    }
+
+                    // Calculate content hash
+                    var contentHash = ComputeHash(fileContent);
+
+                    // Create document object
+                    var document = new Document
+                    {
+                        Id = Guid.NewGuid().ToString(),
+                        ProjectId = _createdProject.Id,
+                        FileName = file.Name,
+                        FileExtension = fileExtension,
+                        FileContent = fileContent,
+                        FileSizeBytes = fileContent.Length,
+                        ExtractedText = extractionResult.Text,
+                        ContentHash = contentHash
+                    };
+
+                    documentsToUpload.Add(document);
+                }
+                catch (Exception ex)
+                {
+                    _fileStatuses[file.Name] = UploadStatus.Failed;
+                    Snackbar.Add($"Error processing '{file.Name}': {ex.Message}", Severity.Error);
+                }
+            }
+
+            // Upload all documents in a batch
+            if (documentsToUpload.Count > 0)
+            {
+                var result = await DocumentService.AddDocumentBatchAsync(documentsToUpload);
+
+                // Update statuses based on results
+                foreach (var successDoc in result.SuccessfulDocuments)
+                {
+                    _fileStatuses[successDoc.FileName] = UploadStatus.Success;
+                }
+
+                foreach (var failedDoc in result.FailedDocuments)
+                {
+                    _fileStatuses[failedDoc.FileName] = UploadStatus.Failed;
+                    Snackbar.Add($"Failed to upload '{failedDoc.FileName}': {failedDoc.ErrorMessage}", Severity.Error);
+                }
+
+                // Show summary
+                if (result.SuccessCount > 0)
+                {
+                    Snackbar.Add($"Successfully uploaded {result.SuccessCount} of {result.TotalCount} documents.", Severity.Success);
+                }
+
+                // Clear successful files and navigate if all succeeded
+                if (result.FailureCount == 0)
+                {
+                    _selectedFiles = null;
+                    _fileStatuses.Clear();
+                    Snackbar.Add("All documents uploaded successfully! Redirecting to project page...", Severity.Success);
+                    await Task.Delay(1500); // Brief delay to show success message
+                    Navigation.NavigateTo($"/projects/{_createdProject.Id}");
+                }
+                else
+                {
+                    // Remove successful files from the list
+                    var successfulFileNames = result.SuccessfulDocuments.Select(d => d.FileName).ToHashSet();
+                    _selectedFiles = _selectedFiles.Where(f => !successfulFileNames.Contains(f.Name)).ToList();
+                    
+                    if (_selectedFiles.Count == 0)
+                    {
+                        _selectedFiles = null;
+                        _fileStatuses.Clear();
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error uploading documents: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _uploading = false;
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>
+    /// Returns the list of supported file extensions.
+    /// </summary>
+    private static string[] GetSupportedExtensions() => [".txt", ".md", ".pdf", ".docx"];
+
+    /// <summary>
+    /// Validates a file for upload, checking size, extension, and filename.
+    /// </summary>
+    /// <param name="file">The file to validate.</param>
+    /// <returns>A tuple indicating if the file is valid and an optional error message.</returns>
+    private async Task<(bool isValid, string? errorMessage)> ValidateFileAsync(IBrowserFile file)
+    {
+        await Task.CompletedTask;
+
+        // Check for empty filename
+        if (string.IsNullOrWhiteSpace(file.Name))
+        {
+            return (false, "File has no name.");
+        }
+
+        // Check file size - must not be empty
+        if (file.Size == 0)
+        {
+            return (false, "File is empty (0 bytes).");
+        }
+
+        // Check file size - must not exceed 50 MB
+        const long maxFileSize = 50 * 1024 * 1024;
+        if (file.Size > maxFileSize)
+        {
+            var sizeMB = file.Size / (1024.0 * 1024.0);
+            return (false, $"File size ({sizeMB:F1} MB) exceeds maximum allowed size of 50 MB.");
+        }
+
+        // Check file extension
+        var extension = Path.GetExtension(file.Name);
+        if (string.IsNullOrEmpty(extension))
+        {
+            return (false, "File has no extension. Supported formats: .txt, .md, .pdf, .docx");
+        }
+
+        var supportedExtensions = GetSupportedExtensions();
+        if (!supportedExtensions.Contains(extension.ToLowerInvariant()))
+        {
+            return (false, $"Unsupported file format '{extension}'. Supported formats: {string.Join(", ", supportedExtensions)}");
+        }
+
+        // Check for invalid characters in filename
+        var invalidChars = Path.GetInvalidFileNameChars();
+        if (file.Name.Any(c => invalidChars.Contains(c)))
+        {
+            return (false, "Filename contains invalid characters.");
+        }
+
+        return (true, null);
+    }
+
+    /// <summary>
+    /// Safely reads file content into a byte array with proper error handling.
+    /// </summary>
+    /// <param name="file">The file to read.</param>
+    /// <returns>A tuple containing the file content and an optional error message.</returns>
+    private async Task<(byte[]? content, string? errorMessage)> ReadFileContentAsync(IBrowserFile file)
+    {
+        const long maxFileSize = 50 * 1024 * 1024; // 50 MB
+
+        try
+        {
+            await using var stream = file.OpenReadStream(maxAllowedSize: maxFileSize);
+            using var memoryStream = new MemoryStream();
+            await stream.CopyToAsync(memoryStream);
+            var content = memoryStream.ToArray();
+
+            // Double-check content is not empty
+            if (content.Length == 0)
+            {
+                return (null, "File content is empty after reading.");
+            }
+
+            return (content, null);
+        }
+        catch (IOException ex)
+        {
+            return (null, $"I/O error reading file: {ex.Message}");
+        }
+        catch (Exception ex)
+        {
+            return (null, $"Unexpected error reading file: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Computes SHA256 hash of file content.
+    /// </summary>
+    private static string ComputeHash(byte[] content)
+    {
+        var hashBytes = SHA256.HashData(content);
+        return Convert.ToHexString(hashBytes).ToLowerInvariant();
     }
 
     private sealed class ProjectFormModel

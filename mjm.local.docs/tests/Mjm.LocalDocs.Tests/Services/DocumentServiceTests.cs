@@ -629,4 +629,123 @@ public sealed class DocumentServiceTests
     }
 
     #endregion
+
+    #region AddDocumentBatchAsync Tests
+
+    [Fact]
+    public async Task AddDocumentBatchAsync_WithAllValidDocuments_ReturnsAllSuccessful()
+    {
+        // Arrange
+        var documents = new List<Document>
+        {
+            CreateTestDocument("doc-1", "proj-1"),
+            CreateTestDocument("doc-2", "proj-1"),
+            CreateTestDocument("doc-3", "proj-1")
+        };
+        var emptyChunks = new List<DocumentChunk>();
+
+        // Mock successful processing for all documents
+        _repository.AddDocumentAsync(Arg.Any<Document>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => callInfo.Arg<Document>());
+        _processor.ChunkDocumentAsync(Arg.Any<Document>(), Arg.Any<CancellationToken>())
+            .Returns(emptyChunks);
+
+        // Act
+        var result = await _sut.AddDocumentBatchAsync(documents);
+
+        // Assert
+        Assert.Equal(3, result.TotalCount);
+        Assert.Equal(3, result.SuccessCount);
+        Assert.Equal(0, result.FailureCount);
+        Assert.Equal(3, result.SuccessfulDocuments.Count);
+        Assert.Empty(result.FailedDocuments);
+        await _repository.Received(3).AddDocumentAsync(Arg.Any<Document>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task AddDocumentBatchAsync_WithSomeFailures_ReturnsPartialResults()
+    {
+        // Arrange
+        var doc1 = CreateTestDocument("doc-1", "proj-1");
+        var doc2 = CreateTestDocument("doc-2", "proj-1");
+        var doc3 = CreateTestDocument("doc-3", "proj-1");
+        var documents = new List<Document> { doc1, doc2, doc3 };
+        var emptyChunks = new List<DocumentChunk>();
+
+        // Mock: doc1 succeeds, doc2 fails, doc3 succeeds
+        _repository.AddDocumentAsync(Arg.Is<Document>(d => d.Id == "doc-1"), Arg.Any<CancellationToken>())
+            .Returns(doc1);
+        _repository.AddDocumentAsync(Arg.Is<Document>(d => d.Id == "doc-2"), Arg.Any<CancellationToken>())
+            .Returns<Document>(_ => throw new InvalidOperationException("Database error"));
+        _repository.AddDocumentAsync(Arg.Is<Document>(d => d.Id == "doc-3"), Arg.Any<CancellationToken>())
+            .Returns(doc3);
+        _processor.ChunkDocumentAsync(Arg.Any<Document>(), Arg.Any<CancellationToken>())
+            .Returns(emptyChunks);
+
+        // Act
+        var result = await _sut.AddDocumentBatchAsync(documents);
+
+        // Assert
+        Assert.Equal(3, result.TotalCount);
+        Assert.Equal(2, result.SuccessCount);
+        Assert.Equal(1, result.FailureCount);
+        Assert.Equal(2, result.SuccessfulDocuments.Count);
+        Assert.Single(result.FailedDocuments);
+        Assert.Equal("test-document.txt", result.FailedDocuments[0].FileName);
+        Assert.Contains("Database error", result.FailedDocuments[0].ErrorMessage);
+        Assert.NotNull(result.FailedDocuments[0].Exception);
+    }
+
+    [Fact]
+    public async Task AddDocumentBatchAsync_WithEmptyList_ReturnsEmptyResult()
+    {
+        // Arrange
+        var emptyDocuments = new List<Document>();
+
+        // Act
+        var result = await _sut.AddDocumentBatchAsync(emptyDocuments);
+
+        // Assert
+        Assert.Equal(0, result.TotalCount);
+        Assert.Equal(0, result.SuccessCount);
+        Assert.Equal(0, result.FailureCount);
+        Assert.Empty(result.SuccessfulDocuments);
+        Assert.Empty(result.FailedDocuments);
+        await _repository.DidNotReceive().AddDocumentAsync(Arg.Any<Document>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task AddDocumentBatchAsync_WithAllFailures_ReturnsAllFailed()
+    {
+        // Arrange
+        var documents = new List<Document>
+        {
+            CreateTestDocument("doc-1", "proj-1"),
+            CreateTestDocument("doc-2", "proj-1"),
+            CreateTestDocument("doc-3", "proj-1")
+        };
+
+        // Mock: all documents fail
+        _repository.AddDocumentAsync(Arg.Any<Document>(), Arg.Any<CancellationToken>())
+            .Returns<Document>(_ => throw new InvalidOperationException("Storage unavailable"));
+
+        // Act
+        var result = await _sut.AddDocumentBatchAsync(documents);
+
+        // Assert
+        Assert.Equal(3, result.TotalCount);
+        Assert.Equal(0, result.SuccessCount);
+        Assert.Equal(3, result.FailureCount);
+        Assert.Empty(result.SuccessfulDocuments);
+        Assert.Equal(3, result.FailedDocuments.Count);
+        Assert.All(result.FailedDocuments, failed =>
+        {
+            Assert.Equal("test-document.txt", failed.FileName);
+            Assert.Contains("Storage unavailable", failed.ErrorMessage);
+            Assert.NotNull(failed.Exception);
+        });
+        await _repository.Received(3).AddDocumentAsync(Arg.Any<Document>(), Arg.Any<CancellationToken>());
+    }
+
+    #endregion
 }

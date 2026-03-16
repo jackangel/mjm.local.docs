@@ -40,9 +40,9 @@ public sealed class SearchDocsTool
     }
 
     [McpServerTool(Name = "search_project_docs")]
-    [Description("Search for documents using semantic search within a specific project. Returns relevant document chunks based on the query.")]
+    [Description("Search for documents within a specific project by **ID**. Returns relevant document chunks.")]
     public async Task<string> SearchProjectDocsAsync(
-        [Description("The project ID to search within")] string projectId,
+        [Description("The project ID (not title) to search within")] string projectId,
         [Description("The search query in natural language")] string query,
         [Description("Maximum number of results to return (default: 5, max: 20)")] int limit = 5,
         CancellationToken cancellationToken = default)
@@ -58,6 +58,28 @@ public sealed class SearchDocsTool
         catch (Exception ex)
         {
             return $"Error searching documents in project '{projectId}': {ex.Message}";
+        }
+    }
+
+    [McpServerTool(Name = "search_docs_by_project_title")]
+    [Description("Search for documents by project title (name). If title doesn't match, searches all projects.")]
+    public async Task<string> SearchDocsByProjectTitleAsync(
+        [Description("The search query in natural language")] string query,
+        [Description("Optional project title/name to filter results. If not found, searches all projects.")] string? projectTitle = null,
+        [Description("Maximum number of results to return (default: 5, max: 20)")] int limit = 5,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            limit = Math.Clamp(limit, 1, 20);
+
+            var results = await _documentService.SearchByProjectTitleAsync(query, projectTitle, limit, cancellationToken);
+
+            return FormatSearchResults(results);
+        }
+        catch (Exception ex)
+        {
+            return $"Error searching documents by project title: {ex.Message}";
         }
     }
 

@@ -22,6 +22,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Mjm.LocalDocs.Core\Mjm.LocalDocs.Core.csproj" />
     <ProjectReference Include="..\..\src\Mjm.LocalDocs.Infrastructure\Mjm.LocalDocs.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\Mjm.LocalDocs.Server\Mjm.LocalDocs.Server.csproj" />
   </ItemGroup>
 
 </Project>

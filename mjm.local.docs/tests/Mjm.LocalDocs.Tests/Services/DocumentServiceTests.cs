@@ -14,6 +14,7 @@ public sealed class DocumentServiceTests
     private readonly IVectorStore _vectorStore;
     private readonly IDocumentProcessor _processor;
     private readonly IEmbeddingService _embeddingService;
+    private readonly IProjectRepository _projectRepository;
     private readonly DocumentService _sut;
 
     public DocumentServiceTests()
@@ -22,12 +23,14 @@ public sealed class DocumentServiceTests
         _vectorStore = Substitute.For<IVectorStore>();
         _processor = Substitute.For<IDocumentProcessor>();
         _embeddingService = Substitute.For<IEmbeddingService>();
+        _projectRepository = Substitute.For<IProjectRepository>();
 
         _sut = new DocumentService(
             _repository,
             _vectorStore,
             _processor,
-            _embeddingService);
+            _embeddingService,
+            _projectRepository);
     }
 
     #region Helper Methods
@@ -69,6 +72,18 @@ public sealed class DocumentServiceTests
     private static ReadOnlyMemory<float> CreateTestEmbedding()
     {
         return new float[] { 0.1f, 0.2f, 0.3f };
+    }
+
+    private static Project CreateTestProject(string id = "proj-1", string name = "TestProject")
+    {
+        return new Project
+        {
+            Id = id,
+            Name = name,
+            Description = "Test project description",
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
     }
 
     #endregion
@@ -745,6 +760,158 @@ public sealed class DocumentServiceTests
             Assert.NotNull(failed.Exception);
         });
         await _repository.Received(3).AddDocumentAsync(Arg.Any<Document>(), Arg.Any<CancellationToken>());
+    }
+
+    #endregion
+
+    #region SearchByProjectTitleAsync Tests
+
+    [Fact]
+    public async Task SearchByProjectTitleAsync_WithValidProjectTitle_FiltersToProjectId()
+    {
+        // Arrange
+        var project = CreateTestProject("proj-1", "MyProject");
+        var queryEmbedding = CreateTestEmbedding();
+        var vectorResults = new List<VectorSearchResult>
+        {
+            new() { ChunkId = "chunk-1", Score = 0.95 }
+        };
+        var chunks = new List<DocumentChunk>
+        {
+            CreateTestChunk("chunk-1", "doc-1", 0)
+        };
+        var documents = new List<Document>
+        {
+            CreateTestDocument("doc-1", "proj-1")
+        };
+
+        _projectRepository.GetByNameAsync("MyProject", Arg.Any<CancellationToken>())
+            .Returns(project);
+        _embeddingService.GenerateEmbeddingAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(queryEmbedding);
+        _vectorStore.SearchAsync(queryEmbedding, Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(vectorResults);
+        _repository.GetChunksByIdsAsync(Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>())
+            .Returns(chunks);
+        _repository.GetDocumentsByProjectAsync("proj-1", Arg.Any<CancellationToken>())
+            .Returns(documents);
+
+        // Act
+        var results = await _sut.SearchByProjectTitleAsync("test query", "MyProject");
+
+        // Assert
+        Assert.NotEmpty(results);
+        await _projectRepository.Received(1).GetByNameAsync("MyProject", Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task SearchByProjectTitleAsync_WithNonExistentProjectTitle_SearchesAllProjects()
+    {
+        // Arrange
+        var queryEmbedding = CreateTestEmbedding();
+        var vectorResults = new List<VectorSearchResult>
+        {
+            new() { ChunkId = "chunk-1", Score = 0.95 }
+        };
+        var chunks = new List<DocumentChunk>
+        {
+            CreateTestChunk("chunk-1", "doc-1", 0)
+        };
+
+        _projectRepository.GetByNameAsync("NonExistent", Arg.Any<CancellationToken>())
+            .Returns((Project?)null);
+        _embeddingService.GenerateEmbeddingAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(queryEmbedding);
+        _vectorStore.SearchAsync(queryEmbedding, Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(vectorResults);
+        _repository.GetChunksByIdsAsync(Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>())
+            .Returns(chunks);
+
+        // Act
+        var results = await _sut.SearchByProjectTitleAsync("test query", "NonExistent");
+
+        // Assert
+        Assert.NotEmpty(results);
+    }
+
+    [Fact]
+    public async Task SearchByProjectTitleAsync_WithNullProjectTitle_SearchesAllProjects()
+    {
+        // Arrange
+        var queryEmbedding = CreateTestEmbedding();
+        var vectorResults = new List<VectorSearchResult>
+        {
+            new() { ChunkId = "chunk-1", Score = 0.95 }
+        };
+        var chunks = new List<DocumentChunk>
+        {
+            CreateTestChunk("chunk-1", "doc-1", 0)
+        };
+
+        _embeddingService.GenerateEmbeddingAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(queryEmbedding);
+        _vectorStore.SearchAsync(queryEmbedding, Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(vectorResults);
+        _repository.GetChunksByIdsAsync(Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>())
+            .Returns(chunks);
+
+        // Act
+        var results = await _sut.SearchByProjectTitleAsync("test query", null);
+
+        // Assert
+        Assert.NotEmpty(results);
+        await _projectRepository.DidNotReceive().GetByNameAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task SearchByProjectTitleAsync_WithEmptyProjectTitle_SearchesAllProjects()
+    {
+        // Arrange
+        var queryEmbedding = CreateTestEmbedding();
+        var vectorResults = new List<VectorSearchResult>
+        {
+            new() { ChunkId = "chunk-1", Score = 0.95 }
+        };
+        var chunks = new List<DocumentChunk>
+        {
+            CreateTestChunk("chunk-1", "doc-1", 0)
+        };
+
+        _embeddingService.GenerateEmbeddingAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(queryEmbedding);
+        _vectorStore.SearchAsync(queryEmbedding, Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(vectorResults);
+        _repository.GetChunksByIdsAsync(Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>())
+            .Returns(chunks);
+
+        // Act
+        var results = await _sut.SearchByProjectTitleAsync("test query", "");
+
+        // Assert
+        Assert.NotEmpty(results);
+        await _projectRepository.DidNotReceive().GetByNameAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task SearchByProjectTitleAsync_WithValidProjectTitle_ReturnsEmptyWhenNoResults()
+    {
+        // Arrange
+        var project = CreateTestProject("proj-1", "MyProject");
+        var queryEmbedding = CreateTestEmbedding();
+        var emptyVectorResults = new List<VectorSearchResult>();
+
+        _projectRepository.GetByNameAsync("MyProject", Arg.Any<CancellationToken>())
+            .Returns(project);
+        _embeddingService.GenerateEmbeddingAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(queryEmbedding);
+        _vectorStore.SearchAsync(queryEmbedding, Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(emptyVectorResults);
+
+        // Act
+        var results = await _sut.SearchByProjectTitleAsync("test query", "MyProject");
+
+        // Assert
+        Assert.Empty(results);
     }
 
     #endregion

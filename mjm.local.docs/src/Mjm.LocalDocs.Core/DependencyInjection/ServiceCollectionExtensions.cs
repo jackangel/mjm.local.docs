@@ -14,7 +14,7 @@ public static class ServiceCollectionExtensions
     /// <summary>
     /// Adds core document services to the service collection.
     /// Requires IDocumentRepository, IVectorStore, IDocumentProcessor, IEmbeddingService,
-    /// and optionally IDocumentFileStorage to be registered.
+    /// IProjectRepository, and optionally IDocumentFileStorage to be registered.
     /// </summary>
     public static IServiceCollection AddLocalDocsCoreServices(this IServiceCollection services)
     {
@@ -24,6 +24,7 @@ public static class ServiceCollectionExtensions
             var vectorStore = sp.GetRequiredService<IVectorStore>();
             var processor = sp.GetRequiredService<IDocumentProcessor>();
             var embeddingService = sp.GetRequiredService<IEmbeddingService>();
+            var projectRepository = sp.GetRequiredService<IProjectRepository>();
             
             // IDocumentFileStorage is optional - null if not registered
             var fileStorage = sp.GetService<IDocumentFileStorage>();
@@ -37,6 +38,7 @@ public static class ServiceCollectionExtensions
                 vectorStore,
                 processor,
                 embeddingService,
+                projectRepository,
                 fileStorage,
                 fileStorageProvider);
         });

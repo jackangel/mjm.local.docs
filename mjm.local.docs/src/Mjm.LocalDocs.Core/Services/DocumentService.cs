@@ -16,6 +16,7 @@ public sealed class DocumentService
     private readonly IEmbeddingService _embeddingService;
     private readonly IDocumentFileStorage? _fileStorage;
     private readonly FileStorageProvider _fileStorageProvider;
+    private readonly IProjectRepository _projectRepository;
 
     /// <summary>
     /// Creates a new DocumentService.
@@ -24,6 +25,7 @@ public sealed class DocumentService
     /// <param name="vectorStore">Vector store for embeddings.</param>
     /// <param name="processor">Document processor for chunking.</param>
     /// <param name="embeddingService">Embedding service.</param>
+    /// <param name="projectRepository">Project repository for project name lookup.</param>
     /// <param name="fileStorage">Optional file storage for external file content storage.</param>
     /// <param name="fileStorageProvider">The configured file storage provider type.</param>
     public DocumentService(
@@ -31,6 +33,7 @@ public sealed class DocumentService
         IVectorStore vectorStore,
         IDocumentProcessor processor,
         IEmbeddingService embeddingService,
+        IProjectRepository projectRepository,
         IDocumentFileStorage? fileStorage = null,
         FileStorageProvider fileStorageProvider = FileStorageProvider.Database)
     {
@@ -38,6 +41,7 @@ public sealed class DocumentService
         _vectorStore = vectorStore;
         _processor = processor;
         _embeddingService = embeddingService;
+        _projectRepository = projectRepository;
         _fileStorage = fileStorage;
         _fileStorageProvider = fileStorageProvider;
     }
@@ -292,6 +296,49 @@ public sealed class DocumentService
         }
 
         return results.Take(limit).ToList();
+    }
+
+    /// <summary>
+    /// Searches for documents matching the query within a project specified by title (name).
+    /// If the project title is null, empty, or not found, searches across all projects.
+    /// </summary>
+    /// <param name="query">The search query.</param>
+    /// <param name="projectTitle">Optional project title (name) to filter results. If null, empty, or not found, searches all projects.</param>
+    /// <param name="limit">Maximum number of results.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Search results ordered by relevance.</returns>
+    public async Task<IReadOnlyList<SearchResult>> SearchByProjectTitleAsync(
+        string query,
+        string? projectTitle,
+        int limit = 10,
+        CancellationToken cancellationToken = default)
+    {
+        // If projectTitle is null or empty, search all projects
+        if (string.IsNullOrEmpty(projectTitle))
+        {
+            return await SearchAsync(query, null, limit, cancellationToken);
+        }
+
+        // Trim whitespace
+        projectTitle = projectTitle.Trim();
+
+        // If empty after trim, search all projects
+        if (string.IsNullOrEmpty(projectTitle))
+        {
+            return await SearchAsync(query, null, limit, cancellationToken);
+        }
+
+        // Try to find the project by name
+        var project = await _projectRepository.GetByNameAsync(projectTitle, cancellationToken);
+
+        // If project found, search within that project
+        if (project != null)
+        {
+            return await SearchAsync(query, project.Id, limit, cancellationToken);
+        }
+
+        // If project not found, fallback to searching all projects
+        return await SearchAsync(query, null, limit, cancellationToken);
     }
 
     /// <summary>

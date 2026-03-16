@@ -328,6 +328,17 @@ mjm.local.docs/
 
 ## Change History
 
+### 2026-03-16 — Added Project Title-Based Document Search
+
+**Pattern**: Title-to-ID Resolution with Graceful Fallback
+- Added `SearchByProjectTitleAsync` to DocumentService (Core layer)
+- Created `search_docs_by_project_title` MCP tool (Server layer)
+- Implemented fallback: if project title not found → search all projects (no error)
+- Search flow: Title lookup via IProjectRepository → ID resolution → reuse existing SearchAsync logic
+- Confidence: 95%
+
+**Architecture Impact**: LOW - Follows existing patterns, additive-only changes
+
 ### 2026-03-09 — Added LlamaCpp Embedding Provider
 
 - Added `LlamaCpp` provider to `EmbeddingProvider` enum (Core)

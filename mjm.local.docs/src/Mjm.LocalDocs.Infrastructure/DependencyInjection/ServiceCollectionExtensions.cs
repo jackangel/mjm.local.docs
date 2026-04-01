@@ -75,6 +75,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<MarkdownDocumentReader>();
         services.AddSingleton<PdfDocumentReader>();
         services.AddSingleton<WordDocumentReader>();
+        services.AddSingleton<ExcelDocumentReader>();
 
         // Register composite reader that aggregates all readers
         services.AddSingleton<CompositeDocumentReader>(sp => new CompositeDocumentReader(
@@ -82,7 +83,8 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<PlainTextDocumentReader>(),
             sp.GetRequiredService<MarkdownDocumentReader>(),
             sp.GetRequiredService<PdfDocumentReader>(),
-            sp.GetRequiredService<WordDocumentReader>()
+            sp.GetRequiredService<WordDocumentReader>(),
+            sp.GetRequiredService<ExcelDocumentReader>()
         ]));
     }
 
